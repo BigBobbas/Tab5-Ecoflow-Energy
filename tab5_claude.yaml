@@ -1,0 +1,1418 @@
+esphome:
+  name: tab5
+  friendly_name: Tab5
+  on_boot:
+    then:
+      - rx8130.read_time:
+      - script.execute: timeout
+
+esp32:
+  variant: esp32p4
+  flash_size: 16MB
+  engineering_sample: true
+  framework:
+    type: esp-idf
+    advanced:
+      enable_idf_experimental_features: true
+
+esp32_hosted:
+  variant: esp32c6
+  active_high: true
+  clk_pin: GPIO12
+  cmd_pin: GPIO13
+  d0_pin: GPIO11
+  d1_pin: GPIO10
+  d2_pin: GPIO9
+  d3_pin: GPIO8
+  reset_pin: GPIO15
+  slot: 1
+
+logger:
+  hardware_uart: USB_SERIAL_JTAG
+
+psram:
+  mode: hex
+  speed: 200MHz
+
+api:
+
+ota:
+  platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  use_address: 192.168.1.228
+
+i2c:
+  - id: bsp_bus
+    sda: GPIO31
+    scl: GPIO32
+    frequency: 400kHz
+
+pi4ioe5v6408:
+  - id: pi4ioe1
+    address: 0x43
+  - id: pi4ioe2
+    address: 0x44
+
+# ─── SWITCHES ────────────────────────────────────────────────────────────────
+
+switch:
+  - platform: gpio
+    id: wifi_power
+    name: "WiFi Power"
+    pin:
+      pi4ioe5v6408: pi4ioe2
+      number: 0
+    restore_mode: ALWAYS_ON
+
+  - platform: gpio
+    id: usb_5v_power
+    name: "USB Power"
+    pin:
+      pi4ioe5v6408: pi4ioe2
+      number: 3
+
+  - platform: gpio
+    id: quick_charge
+    name: "Quick Charge"
+    pin:
+      pi4ioe5v6408: pi4ioe2
+      number: 5
+      inverted: true
+
+  - platform: gpio
+    id: charge_enable
+    name: "Charge Enable"
+    pin:
+      pi4ioe5v6408: pi4ioe2
+      number: 7
+
+  - platform: gpio
+    id: wifi_antenna_int_ext
+    pin:
+      pi4ioe5v6408: pi4ioe1
+      number: 0
+
+  - platform: gpio
+    id: speaker_enable
+    name: "Speaker Enable"
+    pin:
+      pi4ioe5v6408: pi4ioe1
+      number: 1
+    restore_mode: ALWAYS_ON
+
+  - platform: gpio
+    id: interrupt_pin_touchscreen
+    pin:
+      inverted: true
+      number: GPIO23
+    restore_mode: ALWAYS_ON
+
+  - platform: gpio
+    id: external_5v_power
+    name: "External 5V Power"
+    pin:
+      pi4ioe5v6408: pi4ioe1
+      number: 2
+    restore_mode: ALWAYS_ON
+
+# ─── SCRIPTS ─────────────────────────────────────────────────────────────────
+
+script:
+  - id: timeout
+    then:
+      - lambda: id(backlight).turn_on().set_brightness(1.0).perform();
+      - delay: 30s
+      - lambda: id(backlight).turn_on().set_brightness(0.2).perform();
+
+# ─── BINARY SENSORS ──────────────────────────────────────────────────────────
+
+binary_sensor:
+  - platform: gpio
+    id: charging
+    name: "Charging Status"
+    pin:
+      pi4ioe5v6408: pi4ioe2
+      number: 6
+      mode: INPUT_PULLDOWN
+
+  - platform: gpio
+    id: headphone_detect
+    name: "Headphone Detect"
+    pin:
+      pi4ioe5v6408: pi4ioe1
+      number: 7
+
+# ─── SELECT ──────────────────────────────────────────────────────────────────
+
+select:
+  - platform: template
+    id: wifi_antenna_select
+    name: "WiFi Antenna"
+    options:
+      - "Internal"
+      - "External"
+    optimistic: true
+    on_value:
+      - if:
+          condition:
+            lambda: return i == 0;
+          then:
+            - switch.turn_off: wifi_antenna_int_ext
+          else:
+            - switch.turn_on: wifi_antenna_int_ext
+
+  - platform: es8388
+    dac_output:
+      name: BOTH
+    adc_input_mic:
+      name: ADC Input Mic
+
+# ─── TOUCHSCREEN ─────────────────────────────────────────────────────────────
+
+touchscreen:
+  - platform: gt911
+    reset_pin:
+      pi4ioe5v6408: pi4ioe1
+      number: 5
+    calibration:
+      x_min: 0
+      y_max: 720
+      y_min: 0
+      x_max: 1280
+    id: device_touch
+    on_touch:
+      - lambda: id(backlight).turn_on().set_brightness(1.0).perform();
+      - script.execute: timeout
+    transform:
+      swap_xy: false
+      mirror_x: false
+      mirror_y: false
+
+# ─── DISPLAY ─────────────────────────────────────────────────────────────────
+
+esp_ldo:
+  - voltage: 2.5V
+    channel: 3
+
+display:
+  - platform: mipi_dsi
+    dimensions:
+      height: 1280
+      width: 720
+    model: M5Stack-Tab5
+    reset_pin:
+      pi4ioe5v6408: pi4ioe1
+      number: 4
+    id: device_display
+
+output:
+  - platform: ledc
+    pin: GPIO22
+    id: backlight_pwm
+    frequency: 1000Hz
+
+light:
+  - platform: monochromatic
+    output: backlight_pwm
+    name: "Display Backlight"
+    id: backlight
+    restore_mode: RESTORE_DEFAULT_ON
+    default_transition_length: 250ms
+
+# ─── AUDIO ───────────────────────────────────────────────────────────────────
+
+i2s_audio:
+  - id: mic_bus
+    i2s_lrclk_pin: GPIO29
+    i2s_bclk_pin: GPIO27
+    i2s_mclk_pin: GPIO30
+
+audio_adc:
+  - platform: es7210
+    id: es7210_adc
+    bits_per_sample: 16bit
+    sample_rate: 16000
+
+microphone:
+  - platform: i2s_audio
+    id: tab5_microphone
+    i2s_din_pin: GPIO28
+    sample_rate: 16000
+    bits_per_sample: 16bit
+    adc_type: external
+
+audio_dac:
+  - platform: es8388
+    id: es8388_dac
+
+speaker:
+  - platform: i2s_audio
+    id: tab5_speaker
+    i2s_dout_pin: GPIO26
+    audio_dac: es8388_dac
+    dac_type: external
+    channel: mono
+    buffer_duration: 100ms
+    bits_per_sample: 16bit
+    sample_rate: 48000
+
+media_player:
+  - platform: speaker
+    name: None
+    id: speaker_player
+    announcement_pipeline:
+      speaker: tab5_speaker
+      format: FLAC
+      sample_rate: 48000
+      num_channels: 1
+
+# ─── TIME ────────────────────────────────────────────────────────────────────
+
+time:
+  - platform: sntp
+    id: sntp_time
+    servers:
+      - ntp0.ntp-servers.net
+      - ntp1.ntp-servers.net
+      - ntp2.ntp-servers.net
+    on_time_sync:
+      then:
+        - rx8130.write_time:
+        - lvgl.page.show: home_page
+
+  - platform: rx8130
+    id: rx8310_time
+    i2c_id: bsp_bus
+    update_interval: never
+
+# ─── FONTS ───────────────────────────────────────────────────────────────────
+
+font:
+  - file: "fonts/materialdesignicons-webfont.ttf"
+    id: battery_icons_60
+    size: 60
+    bpp: 4
+    glyphs: &icon_glyphs [
+      "\U000F007A", # mdi-battery-10
+      "\U000F007B", # mdi-battery-20
+      "\U000F007C", # mdi-battery-30
+      "\U000F007D", # mdi-battery-40
+      "\U000F007E", # mdi-battery-50
+      "\U000F007F", # mdi-battery-60
+      "\U000F0080", # mdi-battery-70
+      "\U000F0081", # mdi-battery-80
+      "\U000F0082", # mdi-battery-90
+      "\U000F0079", # mdi-battery (full)
+      "\U000F008E", # mdi-battery-outline
+      "\U000F0091", # mdi-battery-unknown
+      "\U000F1A73", # solar-panel
+      "\U000F05A8", # sunny
+      "\U000F192D", # electric-import
+      "\U000F192C", # electric-export
+      "\U000F0084", # charging
+      "\U000F17DE", # discharging
+      "\U000F1903", # house-power
+      "\U000F01F8", # sad
+      "\U000F01F2", # happy
+      "\U000F0055", # arrow-right
+      "\U000F004E", # arrow-left
+      ]
+
+  - file: "fonts/materialdesignicons-webfont.ttf"
+    id: icons_100
+    size: 140
+    bpp: 4
+    glyphs: *icon_glyphs
+
+  - file: "fonts/materialdesignicons-webfont.ttf"
+    id: icons_180
+    size: 180
+    bpp: 4
+    glyphs: *icon_glyphs
+
+# ─── COLORS ──────────────────────────────────────────────────────────────────
+
+color:
+  - id: light_blue
+    hex: 'A9CBE9'
+  - id: leaf_green
+    hex: '60A86A'
+
+# ─── TEXT SENSORS ────────────────────────────────────────────────────────────
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: IP Address
+      id: ip_addr
+      entity_category: "diagnostic"
+
+# ─── SENSORS ─────────────────────────────────────────────────────────────────
+
+sensor:
+
+  # Savings
+  - platform: homeassistant
+    id: today_saving
+    entity_id: sensor.solar_saving_today
+    on_value:
+      - lvgl.label.update:
+          id: today_saving_lbl
+          text:
+            format: "%.2f"
+            args: [ x ]
+
+  - platform: homeassistant
+    id: week_saving
+    entity_id: sensor.solar_saving_this_week
+    on_value:
+      - lvgl.label.update:
+          id: week_saving_lbl
+          text:
+            format: "%.2f"
+            args: [ x ]
+
+  - platform: homeassistant
+    id: month_saving
+    entity_id: sensor.solar_saving_this_month
+    on_value:
+      - lvgl.label.update:
+          id: month_saving_lbl
+          text:
+            format: "%.2f"
+            args: [ x ]
+
+  # Demand breakdown
+  - platform: homeassistant
+    id: total_ct
+    entity_id: sensor.total_power
+    on_value:
+      - lvgl.label.update:
+          id: ct_text_total
+          text:
+            format: "%.0fw"
+            args: [ x ]
+      - lvgl.label.update:
+          id: ef_home_watts
+          text:
+            format: "%.0fw"
+            args: [ x ]
+
+  - platform: homeassistant
+    id: kitch_demand_sens
+    entity_id: sensor.shellyem3_483fdac3b357_phase_a_power
+    on_value:
+      - lvgl.label.update:
+          id: kitch_text_total
+          text:
+            format: "%.0fw"
+            args: [ x ]
+
+  - platform: homeassistant
+    id: hot_tub_demand_sens
+    entity_id: sensor.shellyem3_483fdac3b357_phase_c_power
+    on_value:
+      - lvgl.label.update:
+          id: hot_tub_text_total
+          text:
+            format: "%.0fw"
+            args: [ x ]
+
+  - platform: homeassistant
+    id: garage_demand_sens
+    entity_id: sensor.shellyem3_483fdac39ecd_phase_b_power
+    on_value:
+      - lvgl.label.update:
+          id: garage_text_total
+          text:
+            format: "%.0fw"
+            args: [ x ]
+
+  - platform: homeassistant
+    id: iot_demand_sens
+    entity_id: sensor.shellyem3_483fdac39ecd_phase_a_power
+    on_value:
+      - lvgl.label.update:
+          id: iot_text_total
+          text:
+            format: "%.0fw"
+            args: [ x ]
+
+  - platform: homeassistant
+    id: downstairs_demand_sens
+    entity_id: sensor.shellyem3_483fdac39ecd_phase_c_power
+    on_value:
+      - lvgl.label.update:
+          id: downstairs_text_total
+          text:
+            format: "%.0fw"
+            args: [ x ]
+
+  - platform: homeassistant
+    id: fridge_demand_sens
+    entity_id: sensor.house_wled_psu_fridge_freezer_watts
+    on_value:
+      - lvgl.label.update:
+          id: fridge_text_total
+          text:
+            format: "%.0fw"
+            args: [ x ]
+
+  # Cabinet temperature
+  - platform: homeassistant
+    id: cab_temp
+    entity_id: sensor.solar_box_monitor_solar_cabinet_temp
+    on_value:
+      - lvgl.label.update:
+          id: temperature_text_cab
+          text:
+            format: "%.0f°C"
+            args: [ x ]
+
+  - platform: homeassistant
+    id: acp_temperature
+    entity_id: sensor.ef_60376_cell_temperature
+    on_value:
+      - lvgl.label.update:
+          id: temperature_text_acp
+          text:
+            format: "%.0f°C"
+            args: [ x ]
+
+  # Combined battery: SOC, power flow, temperature
+  - platform: homeassistant
+    id: battery_soc_pct
+    entity_id: sensor.ef_61821_battery_level
+    on_value:
+      - lvgl.label.update:
+          id: lbl_battery_status_text_acp
+          text:
+            format: "%.0f%%"
+            args: [ x ]
+      - lvgl.label.update:
+          id: ef_batt_soc
+          text:
+            format: "%.0f%%"
+            args: [ x ]
+      - lambda: |-
+          auto color = x < 15 ? lv_palette_main(LV_PALETTE_RED) : lv_palette_main(LV_PALETTE_GREEN);
+          lv_obj_set_style_text_color(id(lbl_battery_status_acp), color, 0);
+          lv_obj_set_style_text_color(id(lbl_battery_status_text_acp), color, 0);
+      - lvgl.label.update:
+          id: lbl_battery_status_acp
+          text: !lambda |-
+            static char buf[10];
+            const char* icon;
+            if      (x == 100) icon = "\U000F0079";
+            else if (x > 90)   icon = "\U000F0082";
+            else if (x > 80)   icon = "\U000F0081";
+            else if (x > 70)   icon = "\U000F0080";
+            else if (x > 60)   icon = "\U000F007F";
+            else if (x > 50)   icon = "\U000F007E";
+            else if (x > 40)   icon = "\U000F007D";
+            else if (x > 30)   icon = "\U000F007C";
+            else if (x > 20)   icon = "\U000F007B";
+            else if (x > 10)   icon = "\U000F007A";
+            else if (x > 0)    icon = "\U000F008E";
+            else               icon = "\U000F0091";
+            snprintf(buf, sizeof(buf), "%s", icon);
+            return buf;
+
+  # Battery power flow
+  # Positive = charging (solar → battery), negative = discharging (battery → home)
+  # Line solar→batt: 510,155 → 245,290  slope=(290-155)/(245-510)=135/-265=-0.509
+  # Line batt→home:  250,420 → 490,600  slope=(600-420)/(490-250)=180/240=0.75
+  - platform: homeassistant
+    id: battery_power_flow
+    entity_id: sensor.ef_61821_battery_power
+    on_value:
+      - lvgl.label.update:
+          id: batt_soc
+          text:
+            format: "%.0fw"
+            args: [ x ]
+      - lvgl.label.update:
+          id: ef_batt_watts
+          text:
+            format: "%.0fw"
+            args: [ x ]
+      - lambda: |-
+          auto color = x < 0 ? lv_palette_main(LV_PALETTE_RED) : lv_palette_main(LV_PALETTE_GREEN);
+          lv_obj_set_style_text_color(id(batt_soc), color, 0);
+          lv_obj_set_style_text_color(id(charge_icon_arrow), color, 0);
+          lv_obj_set_style_text_color(id(ef_batt_watts), color, 0);
+      - lvgl.label.update:
+          id: charge_icon_arrow
+          text: !lambda |-
+            static char buf[10];
+            snprintf(buf, sizeof(buf), "%s", x > 0 ? "\U000F0055" : "\U000F004E");
+            return buf;
+      - lambda: |-
+                float watts = x < 0 ? -x : x;
+                int dur = watts > 10 ? (int)(1500000.0f / watts) : 3000;
+                if (dur < 300) dur = 300;
+                if (dur > 3000) dur = 3000;
+                static lv_anim_t a;
+                lv_anim_init(&a);
+                lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+                lv_anim_set_duration(&a, dur);
+                if (x > 10) {
+                  // Charging: show solar→battery dot, hide battery→home dot
+                  lv_obj_clear_flag(id(dot_solar_batt), LV_OBJ_FLAG_HIDDEN);
+                  lv_obj_add_flag(id(dot_batt_home), LV_OBJ_FLAG_HIDDEN);
+                  lv_anim_set_var(&a, id(dot_solar_batt));
+                  lv_anim_set_exec_cb(&a, [](void* obj, int32_t v) {
+                    lv_obj_set_x((lv_obj_t*)obj, v - 9);
+                    lv_obj_set_y((lv_obj_t*)obj, 155 + (int)((510 - v) * 0.509f) - 9);
+                  });
+                  lv_anim_set_values(&a, 510, 245);
+                } else if (x < -10) {
+                  // Discharging: show battery→home dot, hide solar→battery dot
+                  lv_obj_clear_flag(id(dot_batt_home), LV_OBJ_FLAG_HIDDEN);
+                  lv_obj_add_flag(id(dot_solar_batt), LV_OBJ_FLAG_HIDDEN);
+                  lv_anim_set_var(&a, id(dot_batt_home));
+                  lv_anim_set_exec_cb(&a, [](void* obj, int32_t v) {
+                    lv_obj_set_x((lv_obj_t*)obj, v - 9);
+                    lv_obj_set_y((lv_obj_t*)obj, 420 + (int)((v - 250) * 0.75f) - 9);
+                  });
+                  lv_anim_set_values(&a, 250, 490);
+                } else {
+                  // Idle: hide both battery dots
+                  lv_obj_add_flag(id(dot_solar_batt), LV_OBJ_FLAG_HIDDEN);
+                  lv_obj_add_flag(id(dot_batt_home), LV_OBJ_FLAG_HIDDEN);
+                }
+                lv_anim_start(&a);
+
+  - platform: homeassistant
+    id: ultra1_temperature
+    entity_id: sensor.ef_61821_cell_temperature
+    on_value:
+      - lvgl.label.update:
+          id: temperature_text_ultra1
+          text:
+            format: "%.0f°C"
+            args: [ x ]
+
+  - platform: homeassistant
+    id: ultra1_pv1
+    entity_id: sensor.ef_61821_pv_1_power
+    on_value:
+      - lvgl.label.update:
+          id: pv1_text_ultra1
+          text:
+            format: "%.0fw"
+            args: [ x ]
+      - lambda: |-
+          lv_obj_set_style_text_color(id(pv1_text_ultra1),
+            x < 100 ? lv_palette_main(LV_PALETTE_RED) : lv_palette_main(LV_PALETTE_GREEN), 0);
+
+  - platform: homeassistant
+    id: ultra1_pv2
+    entity_id: sensor.ef_61821_pv_2_power
+    on_value:
+      - lvgl.label.update:
+          id: pv2_text_ultra1
+          text:
+            format: "%.0fw"
+            args: [ x ]
+      - lambda: |-
+          lv_obj_set_style_text_color(id(pv2_text_ultra1),
+            x < 100 ? lv_palette_main(LV_PALETTE_RED) : lv_palette_main(LV_PALETTE_GREEN), 0);
+
+  - platform: homeassistant
+    id: ultra2_temperature
+    entity_id: sensor.ef_60925_cell_temperature
+    on_value:
+      - lvgl.label.update:
+          id: temperature_text_ultra2
+          text:
+            format: "%.0f°C"
+            args: [ x ]
+
+  - platform: homeassistant
+    id: ultra2_pv1
+    entity_id: sensor.inverter_2_pv_1_power
+    on_value:
+      - lvgl.label.update:
+          id: pv1_text_ultra2
+          text:
+            format: "%.0fw"
+            args: [ x ]
+      - lambda: |-
+          lv_obj_set_style_text_color(id(pv1_text_ultra2),
+            x < 100 ? lv_palette_main(LV_PALETTE_RED) : lv_palette_main(LV_PALETTE_GREEN), 0);
+
+  - platform: homeassistant
+    id: ultra2_pv2
+    entity_id: sensor.inverter_2_pv_2_power
+    on_value:
+      - lvgl.label.update:
+          id: pv2_text_ultra2
+          text:
+            format: "%.0fw"
+            args: [ x ]
+      - lambda: |-
+          lv_obj_set_style_text_color(id(pv2_text_ultra2),
+            x < 100 ? lv_palette_main(LV_PALETTE_RED) : lv_palette_main(LV_PALETTE_GREEN), 0);
+
+  - platform: homeassistant
+    id: ultra3_temperature
+    entity_id: sensor.ef_60990_cell_temperature
+    on_value:
+      - lvgl.label.update:
+          id: temperature_text_ultra3
+          text:
+            format: "%.0f°C"
+            args: [ x ]
+
+  - platform: homeassistant
+    id: ultra3_pv1
+    entity_id: sensor.inverter_3_pv_1_power
+    on_value:
+      - lvgl.label.update:
+          id: pv1_text_ultra3
+          text:
+            format: "%.0fw"
+            args: [ x ]
+      - lambda: |-
+          lv_obj_set_style_text_color(id(pv1_text_ultra3),
+            x < 100 ? lv_palette_main(LV_PALETTE_RED) : lv_palette_main(LV_PALETTE_GREEN), 0);
+
+  - platform: homeassistant
+    id: ultra3_pv2
+    entity_id: sensor.inverter_3_pv_2_power
+    on_value:
+      - lvgl.label.update:
+          id: pv3_text_ultra3
+          text:
+            format: "%.0fw"
+            args: [ x ]
+      - lambda: |-
+          lv_obj_set_style_text_color(id(pv3_text_ultra3),
+            x < 100 ? lv_palette_main(LV_PALETTE_RED) : lv_palette_main(LV_PALETTE_GREEN), 0);
+
+  # Total solar AC output (all 3 Ultras combined, post-inversion)
+  # Line solar→home: 590,170 → 590,530  vertical, x fixed at 590
+  - platform: homeassistant
+    id: total_pv
+    entity_id: sensor.total_solar
+    on_value:
+      - lvgl.label.update:
+          id: pv_text_total
+          text:
+            format: "%.0fw"
+            args: [ x ]
+      - lvgl.label.update:
+          id: ef_solar_watts
+          text:
+            format: "%.0fw"
+            args: [ x ]
+      - lambda: |-
+          lv_obj_set_style_text_color(id(pv_text_total),
+            x < 600 ? lv_palette_main(LV_PALETTE_RED) : lv_palette_main(LV_PALETTE_GREEN), 0);
+          lv_obj_set_style_text_color(id(smile_icon),
+            x < 600 ? lv_palette_main(LV_PALETTE_RED) : lv_palette_main(LV_PALETTE_YELLOW), 0);
+      - lvgl.label.update:
+          id: smile_icon
+          text: !lambda |-
+            static char buf[10];
+            snprintf(buf, sizeof(buf), "%s", x > 599 ? "\U000F01F2" : "\U000F01F8");
+            return buf;
+      - lambda: |-
+              float watts = x > 0 ? x : 0;
+              int dur = watts > 10 ? (int)(1500000.0f / watts) : 3000;
+              if (dur < 300) dur = 300;
+              if (dur > 3000) dur = 3000;
+              static lv_anim_t a;
+              lv_anim_init(&a);
+              lv_anim_set_var(&a, id(dot_solar_home));
+              lv_anim_set_exec_cb(&a, [](void* obj, int32_t v) {
+                lv_obj_set_x((lv_obj_t*)obj, 581);
+                lv_obj_set_y((lv_obj_t*)obj, v - 9);
+              });
+              lv_anim_set_values(&a, 170, 530);
+              lv_anim_set_duration(&a, dur);
+              lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+              lv_anim_start(&a);
+
+  # Grid import / export
+  # Line grid→home: 940,410 → 690,600  slope=(600-410)/(690-940)=190/-250=-0.76
+  - platform: homeassistant
+    id: total_demand
+    entity_id: sensor.ecoflow_meter_grid_power
+    on_value:
+      - lvgl.label.update:
+          id: demand_text_total
+          text:
+            format: "%.0fw"
+            args: [ x ]
+      - lvgl.label.update:
+          id: ef_grid_watts
+          text:
+            format: "%.0fw"
+            args: [ x ]
+      - lambda: |-
+          auto color = x < 0 ? lv_palette_main(LV_PALETTE_RED) : lv_palette_main(LV_PALETTE_ORANGE);
+          lv_obj_set_style_text_color(id(demand_text_total), color, 0);
+          lv_obj_set_style_text_color(id(demand_icon_grid), color, 0);
+          lv_obj_set_style_text_color(id(ef_grid_watts), color, 0);
+      - lvgl.label.update:
+          id: demand_icon_grid
+          text: !lambda |-
+            static char buf[10];
+            snprintf(buf, sizeof(buf), "%s", x > 0 ? "\U000F192D" : "\U000F192C");
+            return buf;
+      - lvgl.label.update:
+          id: ef_grid_icon
+          text: !lambda |-
+            static char buf[10];
+            snprintf(buf, sizeof(buf), "%s", x > 0 ? "\U000F192D" : "\U000F192C");
+            return buf;
+      - lambda: |-
+          float watts = x < 0 ? -x : x;
+          // Speed: 300W=1000ms, 1500W=200ms. Clamp 200–3000ms.
+          int dur = watts > 10 ? (int)(300000.0f / watts) : 3000;
+          if (dur < 200) dur = 200;
+          if (dur > 3000) dur = 3000;
+          static lv_anim_t a;
+          lv_anim_init(&a);
+          lv_anim_set_var(&a, id(dot_grid_home));
+          lv_anim_set_exec_cb(&a, [](void* obj, int32_t v) {
+            // Line: 940,410 → 690,600  slope = -0.76
+            lv_obj_set_x((lv_obj_t*)obj, v - 9);
+            lv_obj_set_y((lv_obj_t*)obj, 410 + (int)((940 - v) * 0.76f) - 9);
+          });
+          // Import: grid(940) → home(690). Export: home(690) → grid(940).
+          lv_anim_set_values(&a, x > 0 ? 940 : 690, x > 0 ? 690 : 940);
+          lv_anim_set_duration(&a, dur);
+          lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+          lv_anim_start(&a);
+
+# ─── LVGL ─────────────────────────────────────────────────────────────────────
+
+lvgl:
+  buffer_size: 100%
+  byte_order: little_endian
+  displays:
+    - device_display
+  rotation: 270
+  touchscreens:
+    - device_touch
+
+  style_definitions:
+    - id: main_content
+      bg_color: black
+      text_color: 0xFFFFFF
+      width: 100%
+      height: 100%
+      align: TOP_MID
+      border_width: 0
+      radius: 0
+
+  theme:
+    button:
+      border_color: orange
+      border_width: 12
+      radius: 50
+      bg_color: black
+
+  pages:
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # PAGE 1 — HOME DASHBOARD
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    - id: home_page
+      on_swipe_left:
+        then:
+          - lvgl.page.show:
+              id: energy_page
+              animation: MOVE_LEFT
+      widgets:
+        - obj:
+            styles: main_content
+            layout:
+              pad_column: 15
+              pad_row: 15
+              type: GRID
+              grid_columns: [FR(1), FR(1), FR(1), FR(1)]
+              grid_rows: [FR(1), FR(1)]
+
+            widgets:
+
+              # ── Cell 1: AC Pro temperatures ───────────────────────────────
+              - button:
+                  checkable: false
+                  id: cell_1
+                  grid_cell_column_pos: 0
+                  grid_cell_row_pos: 0
+                  grid_cell_x_align: STRETCH
+                  grid_cell_y_align: STRETCH
+                  widgets:
+                    - label:
+                        text_font: montserrat_48
+                        text_color: brown
+                        text: "AC Pro"
+                        align: TOP_MID
+                    - label:
+                        id: temperature_text_acp
+                        text_font: montserrat_48
+                        text: "-°C"
+                        align: TOP_MID
+                        y: 55
+                    - label:
+                        text_font: montserrat_48
+                        text_color: brown
+                        text: "Cabinet"
+                        align: TOP_MID
+                        y: 135
+                    - label:
+                        id: temperature_text_cab
+                        text_font: montserrat_48
+                        text: "-°C"
+                        align: TOP_MID
+                        y: 195
+
+              # ── Cell 5: Combined battery SOC + charge direction ────────────
+              - button:
+                  checkable: false
+                  id: cell_5
+                  grid_cell_column_pos: 0
+                  grid_cell_row_pos: 1
+                  grid_cell_x_align: STRETCH
+                  grid_cell_y_align: STRETCH
+                  widgets:
+                    - label:
+                        id: lbl_battery_status_text_acp
+                        align: TOP_MID
+                        text_font: montserrat_48
+                        text: "_%"
+                    - label:
+                        id: lbl_battery_status_acp
+                        align: TOP_MID
+                        y: 40
+                        text_font: icons_180
+                        text: "\U000F0091"
+                    - label:
+                        id: batt_soc
+                        align: TOP_MID
+                        y: 210
+                        text_font: montserrat_48
+                        text: "_"
+                    - label:
+                        id: charge_icon_arrow
+                        align: TOP_LEFT
+                        y: 100
+                        x: 10
+                        text_font: battery_icons_60
+                        text: "\U000F0091"
+
+              # ── Cell 2: Ultra 1 ───────────────────────────────────────────
+              - button:
+                  id: cell_2
+                  grid_cell_column_pos: 1
+                  grid_cell_row_pos: 0
+                  grid_cell_x_align: STRETCH
+                  grid_cell_y_align: STRETCH
+                  widgets:
+                    - label:
+                        text_color: brown
+                        text_font: montserrat_48
+                        text: "Ultra 1"
+                        align: TOP_MID
+                    - label:
+                        id: temperature_text_ultra1
+                        text_font: montserrat_48
+                        text: "-°C"
+                        align: TOP_MID
+                        y: 55
+                    - label:
+                        text_font: battery_icons_60
+                        text: "\U000F1A73"
+                        text_color: yellow
+                        align: TOP_MID
+                        y: 115
+                    - label:
+                        id: pv1_text_ultra1
+                        text_font: montserrat_48
+                        text: "-w"
+                        align: TOP_MID
+                        y: 175
+                    - label:
+                        id: pv2_text_ultra1
+                        text_font: montserrat_48
+                        text: "-w"
+                        align: TOP_MID
+                        y: 235
+
+              # ── Cell 6: Total solar + grid summary ───────────────────────
+              - button:
+                  checkable: false
+                  id: cell_6
+                  grid_cell_column_pos: 1
+                  grid_cell_row_pos: 1
+                  grid_cell_x_align: STRETCH
+                  grid_cell_y_align: STRETCH
+                  widgets:
+                    - label:
+                        text_font: battery_icons_60
+                        text: "\U000F1A73"
+                        text_color: yellow
+                        align: TOP_LEFT
+                    - label:
+                        id: pv_text_total
+                        text_font: montserrat_48
+                        text: "-w"
+                        align: TOP_RIGHT
+                    - label:
+                        id: demand_icon_grid
+                        text_font: battery_icons_60
+                        text_color: light_blue
+                        text: "\U000F192D"
+                        align: TOP_LEFT
+                        y: 80
+                    - label:
+                        id: demand_text_total
+                        text_font: montserrat_48
+                        text: "-w"
+                        align: TOP_RIGHT
+                        y: 85
+                    - label:
+                        id: smile_icon
+                        text_font: icons_100
+                        text: "-"
+                        text_color: yellow
+                        align: TOP_MID
+                        y: 160
+
+              # ── Cell 3: Ultra 2 ───────────────────────────────────────────
+              - button:
+                  id: cell_3
+                  grid_cell_column_pos: 2
+                  grid_cell_row_pos: 0
+                  grid_cell_x_align: STRETCH
+                  grid_cell_y_align: STRETCH
+                  widgets:
+                    - label:
+                        text_color: brown
+                        text_font: montserrat_48
+                        text: "Ultra 2"
+                        align: TOP_MID
+                    - label:
+                        id: temperature_text_ultra2
+                        text_font: montserrat_48
+                        text: "-°C"
+                        align: TOP_MID
+                        y: 55
+                    - label:
+                        text_font: battery_icons_60
+                        text: "\U000F1A73"
+                        text_color: yellow
+                        align: TOP_MID
+                        y: 115
+                    - label:
+                        id: pv1_text_ultra2
+                        text_font: montserrat_48
+                        text: "-w"
+                        align: TOP_MID
+                        y: 175
+                    - label:
+                        id: pv2_text_ultra2
+                        text_font: montserrat_48
+                        text: "-w"
+                        align: TOP_MID
+                        y: 235
+
+              # ── Cell 7: Demand breakdown ──────────────────────────────────
+              - button:
+                  checkable: false
+                  id: cell_7
+                  grid_cell_column_pos: 2
+                  grid_cell_row_pos: 1
+                  grid_cell_x_align: STRETCH
+                  grid_cell_y_align: STRETCH
+                  widgets:
+                    - label:
+                        text_font: montserrat_32
+                        text: "Kitchen"
+                        align: TOP_LEFT
+                        y: 5
+                    - label:
+                        id: kitch_text_total
+                        text_font: montserrat_32
+                        text: "-w"
+                        align: TOP_RIGHT
+                        y: 5
+                    - label:
+                        text_font: montserrat_32
+                        text: "Hot Tub"
+                        align: TOP_LEFT
+                        y: 40
+                    - label:
+                        id: hot_tub_text_total
+                        text_font: montserrat_32
+                        text: "-w"
+                        align: TOP_RIGHT
+                        y: 40
+                    - label:
+                        text_font: montserrat_32
+                        text: "Garage"
+                        align: TOP_LEFT
+                        y: 75
+                    - label:
+                        id: garage_text_total
+                        text_font: montserrat_32
+                        text: "-w"
+                        align: TOP_RIGHT
+                        y: 75
+                    - label:
+                        text_font: montserrat_32
+                        text: "IoT"
+                        align: TOP_LEFT
+                        y: 110
+                    - label:
+                        id: iot_text_total
+                        text_font: montserrat_32
+                        text: "-w"
+                        align: TOP_RIGHT
+                        y: 110
+                    - label:
+                        text_font: montserrat_32
+                        text: "Sockets"
+                        align: TOP_LEFT
+                        y: 145
+                    - label:
+                        id: downstairs_text_total
+                        text_font: montserrat_32
+                        text: "-w"
+                        align: TOP_RIGHT
+                        y: 145
+                    - label:
+                        text_font: montserrat_32
+                        text: "Fridge"
+                        align: TOP_LEFT
+                        y: 180
+                    - label:
+                        id: fridge_text_total
+                        text_font: montserrat_32
+                        text: "-w"
+                        align: TOP_RIGHT
+                        y: 180
+                    - label:
+                        text_font: montserrat_32
+                        text: "Total"
+                        align: TOP_LEFT
+                        y: 250
+                    - label:
+                        id: ct_text_total
+                        text_font: montserrat_32
+                        text: "-w"
+                        align: TOP_RIGHT
+                        y: 250
+
+              # ── Cell 4: Ultra 3 ───────────────────────────────────────────
+              - button:
+                  id: cell_4
+                  grid_cell_column_pos: 3
+                  grid_cell_row_pos: 0
+                  grid_cell_x_align: STRETCH
+                  grid_cell_y_align: STRETCH
+                  widgets:
+                    - label:
+                        text_color: brown
+                        text_font: montserrat_48
+                        text: "Ultra 3"
+                        align: TOP_MID
+                    - label:
+                        id: temperature_text_ultra3
+                        text_font: montserrat_48
+                        text: "-°C"
+                        align: TOP_MID
+                        y: 55
+                    - label:
+                        text_font: battery_icons_60
+                        text: "\U000F1A73"
+                        text_color: yellow
+                        align: TOP_MID
+                        y: 115
+                    - label:
+                        id: pv1_text_ultra3
+                        text_font: montserrat_48
+                        text: "-w"
+                        align: TOP_MID
+                        y: 175
+                    - label:
+                        id: pv3_text_ultra3
+                        text_font: montserrat_48
+                        text: "-w"
+                        align: TOP_MID
+                        y: 235
+
+              # ── Cell 8: Savings ───────────────────────────────────────────
+              - button:
+                  checkable: false
+                  id: cell_8
+                  grid_cell_column_pos: 3
+                  grid_cell_row_pos: 1
+                  grid_cell_x_align: STRETCH
+                  grid_cell_y_align: STRETCH
+                  widgets:
+                    - label:
+                        text_font: battery_icons_60
+                        text_color: light_blue
+                        text: "\U000F1903"
+                        align: TOP_MID
+                    - label:
+                        text_font: montserrat_32
+                        text_color: orange
+                        text: "Today"
+                        align: TOP_LEFT
+                        y: 70
+                    - label:
+                        id: today_saving_lbl
+                        text_font: montserrat_32
+                        text_color: white
+                        text: "_"
+                        align: TOP_RIGHT
+                        y: 70
+                    - label:
+                        text_font: montserrat_32
+                        text_color: orange
+                        text: "Week"
+                        align: TOP_LEFT
+                        y: 130
+                    - label:
+                        id: week_saving_lbl
+                        text_font: montserrat_32
+                        text_color: white
+                        text: "_"
+                        align: TOP_RIGHT
+                        y: 130
+                    - label:
+                        text_font: montserrat_32
+                        text_color: orange
+                        text: "Month"
+                        align: TOP_LEFT
+                        y: 190
+                    - label:
+                        id: month_saving_lbl
+                        text_font: montserrat_32
+                        text_color: white
+                        text: "_"
+                        align: TOP_RIGHT
+                        y: 190
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # PAGE 2 — ENERGY FLOW
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    - id: energy_page
+      on_swipe_right:
+        then:
+          - lvgl.page.show:
+              id: home_page
+              animation: MOVE_RIGHT
+      widgets:
+        - obj:
+            styles: main_content
+            widgets:
+
+              # ── Connecting lines ──────────────────────────────────────────
+
+              # Solar → Home (vertical, x=590)
+              - line:
+                  id: line_solar_home
+                  points:
+                    - 590, 170
+                    - 590, 530
+                  line_color: yellow
+                  line_width: 3
+                  line_opa: 60%
+
+              # Battery → Home
+              - line:
+                  id: line_batt_home
+                  points:
+                    - 250, 420
+                    - 490, 600
+                  line_color: 0x60A86A
+                  line_width: 3
+                  line_opa: 60%
+
+              # Grid → Home
+              - line:
+                  id: line_grid_home
+                  points:
+                    - 940, 410
+                    - 690, 600
+                  line_color: 0xA9CBE9
+                  line_width: 3
+                  line_opa: 60%
+
+              # Solar → Battery
+              - line:
+                  id: line_solar_batt
+                  points:
+                    - 510, 155
+                    - 245, 290
+                  line_color: yellow
+                  line_width: 3
+                  line_opa: 60%
+
+              # ── Animated dots ─────────────────────────────────────────────
+              # Each dot starts at the line's FROM endpoint minus 9px (half dot size)
+              # to centre it on the line.
+
+              # Solar → Home dot (vertical line x=590, starts at top y=170)
+              - obj:
+                  id: dot_solar_home
+                  width: 18
+                  height: 18
+                  radius: 9
+                  bg_color: yellow
+                  border_width: 0
+                  x: 581
+                  y: 161
+
+              # Battery → Home dot (starts at 250,420)
+              - obj:
+                  id: dot_batt_home
+                  width: 18
+                  height: 18
+                  radius: 9
+                  bg_color: 0x60A86A
+                  border_width: 0
+                  x: 241
+                  y: 411
+                  hidden: true
+
+              # Grid → Home dot (starts at 940,410)
+              - obj:
+                  id: dot_grid_home
+                  width: 18
+                  height: 18
+                  radius: 9
+                  bg_color: 0xA9CBE9
+                  border_width: 0
+                  x: 931
+                  y: 401
+
+              # Solar → Battery dot (starts at 510,155)
+              - obj:
+                  id: dot_solar_batt
+                  width: 18
+                  height: 18
+                  radius: 9
+                  bg_color: yellow
+                  border_width: 0
+                  x: 501
+                  y: 146
+                  hidden: true
+
+              # ── Node: Solar (top centre) ──────────────────────────────────
+              - obj:
+                  id: solar_node
+                  x: 490
+                  y: 30
+                  width: 200
+                  height: 140
+                  bg_color: 0x1A1A00
+                  border_color: yellow
+                  border_width: 3
+                  radius: 50
+                  widgets:
+                    - label:
+                        text_font: battery_icons_60
+                        text_color: yellow
+                        text: "\U000F1A73"
+                        align: TOP_MID
+                    - label:
+                        id: ef_solar_watts
+                        text_font: montserrat_32
+                        text_color: yellow
+                        text: "0w"
+                        align: BOTTOM_MID
+
+              # ── Node: Battery (middle left) ───────────────────────────────
+              - obj:
+                  id: battery_node
+                  x: 60
+                  y: 280
+                  width: 200
+                  height: 160
+                  bg_color: 0x001A00
+                  border_color: 0x60A86A
+                  border_width: 3
+                  radius: 50
+                  widgets:
+                    - label:
+                        id: lbl_ef_batt_icon
+                        text_font: battery_icons_60
+                        text_color: 0x60A86A
+                        text: "\U000F0079"
+                        align: CENTER
+                    - label:
+                        id: ef_batt_soc
+                        text_font: montserrat_32
+                        text_color: 0x60A86A
+                        text: "-%"
+                        align: TOP_MID
+                        y: -5
+                    - label:
+                        id: ef_batt_watts
+                        text_font: montserrat_32
+                        text_color: 0x60A86A
+                        text: "0w"
+                        align: BOTTOM_MID
+
+              # ── Node: Grid (middle right) ─────────────────────────────────
+              - obj:
+                  id: grid_node
+                  x: 920
+                  y: 280
+                  width: 200
+                  height: 140
+                  bg_color: 0x001020
+                  border_color: 0xA9CBE9
+                  border_width: 3
+                  radius: 50
+                  widgets:
+                    - label:
+                        id: ef_grid_icon
+                        text_font: battery_icons_60
+                        text_color: 0xA9CBE9
+                        text: "\U000F192D"
+                        align: TOP_MID
+                    - label:
+                        id: ef_grid_watts
+                        text_font: montserrat_32
+                        text_color: 0xA9CBE9
+                        text: "0w"
+                        align: BOTTOM_MID
+
+              # ── Node: Home (bottom centre) ────────────────────────────────
+              - obj:
+                  id: home_node
+                  x: 490
+                  y: 530
+                  width: 200
+                  height: 140
+                  bg_color: 0x1A0A00
+                  border_color: orange
+                  border_width: 3
+                  radius: 50
+                  widgets:
+                    - label:
+                        text_font: battery_icons_60
+                        text_color: orange
+                        text: "\U000F1903"
+                        align: TOP_MID
+                    - label:
+                        id: ef_home_watts
+                        text_font: montserrat_32
+                        text_color: orange
+                        text: "0w"
+                        align: BOTTOM_MID
